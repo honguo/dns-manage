@@ -35,6 +35,9 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class HttpClientWithDNSCacheAutoClear {
 
@@ -43,55 +46,69 @@ public class HttpClientWithDNSCacheAutoClear {
 
     private volatile static CloseableHttpClient http_client = null;
     private volatile static RequestConfig request_config = null;
+    private static ExecutorService threadPool;
+    private static ExecutorService getThreadPool() {
+        if (threadPool == null) {
+            threadPool = Executors.newCachedThreadPool();
+        }
+        return threadPool;
+    }
+
 
     /**
      * 从连接池获取连接对象超时时间
      */
-    private int connectionRequestTimeout;
+    private static int connectionRequestTimeout;
     /**
      * 连接超时时间
      */
-    private int connectTimeout;
+    private static int connectTimeout;
     /**
      * 读超时时间
      */
-    private int socketTimeout;
+    private static int socketTimeout;
 
     /**
      * 请求响应结果
      */
-    private String respMessage;
-    private String identification;
+    private static String respMessage;
+    private static String identification;
+
+    private static volatile boolean shutdown;
+
+    private static HttpClientConnectionManager conMgr;
+
 
     public HttpClientWithDNSCacheAutoClear() {
-        this.connectionRequestTimeout = 5000;
-        this.connectTimeout = 15000;
-        this.socketTimeout = 30000;
-        this.identification = "";
+        connectionRequestTimeout = 5000;
+        connectTimeout = 15000;
+        socketTimeout = 30000;
+        identification = "";
     }
 
     public HttpClientWithDNSCacheAutoClear(String identification) {
-        this.connectionRequestTimeout = 5000;
-        this.connectTimeout = 15000;
-        this.socketTimeout = 30000;
-        this.identification = identification;
+        connectionRequestTimeout = 5000;
+        connectTimeout = 15000;
+        socketTimeout = 30000;
+        identification = identification;
     }
 
     public HttpClientWithDNSCacheAutoClear(int connectionRequestTimeout, int connectTimeout, int socketTimeout, String identification) {
-        this.connectionRequestTimeout = connectionRequestTimeout;
-        this.connectTimeout = connectTimeout;
-        this.socketTimeout = socketTimeout;
-        this.identification = identification;
+        connectionRequestTimeout = connectionRequestTimeout;
+        connectTimeout = connectTimeout;
+        socketTimeout = socketTimeout;
+        identification = identification;
     }
 
-    private void init() {
+    private static void init() {
+        conMgr = getConnectionManager();
         if (http_client == null) {
             synchronized (HttpClientWithDNSCacheAutoClear.class) {
                 if (http_client == null) {
                     logger.info("init_xhttpclient");
                     http_client = HttpClients
                             .custom()
-                            .setConnectionManager(getConnectionManager())
+                            .setConnectionManager(conMgr)
                             .build();
                 }
             }
@@ -102,12 +119,31 @@ public class HttpClientWithDNSCacheAutoClear {
                     logger.info("init_xrequestconfig");
                     request_config = RequestConfig
                             .custom()
-                            .setConnectionRequestTimeout(this.connectionRequestTimeout)
-                            .setConnectTimeout(this.connectTimeout)
-                            .setSocketTimeout(this.socketTimeout).build();
+                            .setConnectionRequestTimeout(connectionRequestTimeout)
+                            .setConnectTimeout(connectTimeout)
+                            .setSocketTimeout(socketTimeout).build();
                 }
             }
         }
+        getThreadPool().execute(() ->{
+            try {
+                while (!shutdown) {
+                    synchronized (this) {
+                        wait(5000);
+                        // Close expired connections
+                        conMgr.closeExpiredConnections();
+                        // Optionally, close connections
+                        // that have been idle longer than 30 sec
+                        getConnectionManager().closeIdleConnections(3, TimeUnit.SECONDS);
+                        System.out.println(111111111);
+                    }
+                }
+            } catch (InterruptedException ex) {
+                // terminate
+            }
+        });
+
+
     }
 
 
@@ -117,7 +153,7 @@ public class HttpClientWithDNSCacheAutoClear {
      * @param params
      * @return
      */
-    public int doPost(String url, Map<String, String> headers, Map<String, String> params, String identification) {
+    public static int doPost(String url, Map<String, String> headers, Map<String, String> params, String identification) {
         HttpPost httpPost = null;
         List<NameValuePair> formParams = new ArrayList<NameValuePair>();
         try {
@@ -151,7 +187,7 @@ public class HttpClientWithDNSCacheAutoClear {
             StatusLine statusLine = response.getStatusLine();
             if (entity != null) {
                 String str = EntityUtils.toString(entity, charset);
-                this.respMessage = str;
+                respMessage = str;
             }
             return statusLine.getStatusCode();
         } catch (ClientProtocolException e) {
@@ -182,7 +218,7 @@ public class HttpClientWithDNSCacheAutoClear {
      * @param headers
      * @return
      */
-    public int doGet(String url, Map<String, String> headers, String identification) {
+    public static int doGet(String url, Map<String, String> headers, String identification) {
         HttpGet httpGet = null;
         try {
             init();
@@ -200,7 +236,7 @@ public class HttpClientWithDNSCacheAutoClear {
             StatusLine statusLine = response.getStatusLine();
             if (entity != null) {
                 String str = EntityUtils.toString(entity, charset);
-                this.respMessage = str;
+                respMessage = str;
             }
             return statusLine.getStatusCode();
         } catch (ConnectTimeoutException e){
@@ -232,7 +268,7 @@ public class HttpClientWithDNSCacheAutoClear {
      * @param headers
      * @return
      */
-    private HttpPost createHttpPost(String url, Map<String, String> headers) {
+    private static HttpPost createHttpPost(String url, Map<String, String> headers) {
         if (url == null || url.length() == 0) return null;
         HttpPost httpPost = new HttpPost();
         if (headers != null && headers.size() > 0) {
@@ -250,7 +286,7 @@ public class HttpClientWithDNSCacheAutoClear {
      * @param headers
      * @return
      */
-    private HttpGet createHttpGet(String url, Map<String, String> headers) {
+    private static HttpGet createHttpGet(String url, Map<String, String> headers) {
         if (url == null || url.length() == 0) return null;
         HttpGet httpGet = new HttpGet();
         httpGet.setURI(URI.create(url));
@@ -266,9 +302,9 @@ public class HttpClientWithDNSCacheAutoClear {
     /**
      * @return
      */
-    private HttpClientConnectionManager getConnectionManager() {
+    public static HttpClientConnectionManager getConnectionManager() {
         try {
-
+            System.out.println("getCon init");
             ConnectionSocketFactory plainsf = PlainConnectionSocketFactory.getSocketFactory();
             Registry<ConnectionSocketFactory> registry = RegistryBuilder.<ConnectionSocketFactory>create()
                     .register("http", plainsf)

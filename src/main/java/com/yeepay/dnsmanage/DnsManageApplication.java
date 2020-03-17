@@ -8,6 +8,8 @@ public class DnsManageApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(DnsManageApplication.class, args);
+//        IdleConnectionMonitorThread thread = new IdleConnectionMonitorThread(HttpClientWithDNSCacheAutoClear.getConnectionManager());
+//        thread.run();
     }
 
 }
