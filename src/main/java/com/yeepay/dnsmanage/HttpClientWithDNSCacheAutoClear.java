@@ -46,13 +46,6 @@ public class HttpClientWithDNSCacheAutoClear {
 
     private volatile static CloseableHttpClient http_client = null;
     private volatile static RequestConfig request_config = null;
-    private static ExecutorService threadPool;
-    private static ExecutorService getThreadPool() {
-        if (threadPool == null) {
-            threadPool = Executors.newCachedThreadPool();
-        }
-        return threadPool;
-    }
 
 
     /**
@@ -68,6 +61,9 @@ public class HttpClientWithDNSCacheAutoClear {
      */
     private static int socketTimeout;
 
+
+    private static HttpClientConnectionManager connMgr = getConnectionManager();
+
     /**
      * 请求响应结果
      */
@@ -75,8 +71,6 @@ public class HttpClientWithDNSCacheAutoClear {
     private static String identification;
 
     private static volatile boolean shutdown;
-
-    private static HttpClientConnectionManager conMgr;
 
 
     public HttpClientWithDNSCacheAutoClear() {
@@ -101,14 +95,13 @@ public class HttpClientWithDNSCacheAutoClear {
     }
 
     private static void init() {
-        conMgr = getConnectionManager();
         if (http_client == null) {
             synchronized (HttpClientWithDNSCacheAutoClear.class) {
                 if (http_client == null) {
                     logger.info("init_xhttpclient");
                     http_client = HttpClients
                             .custom()
-                            .setConnectionManager(conMgr)
+                            .setConnectionManager(connMgr)
                             .build();
                 }
             }
@@ -125,24 +118,6 @@ public class HttpClientWithDNSCacheAutoClear {
                 }
             }
         }
-        getThreadPool().execute(() ->{
-            try {
-                while (!shutdown) {
-                    synchronized (this) {
-                        wait(5000);
-                        // Close expired connections
-                        conMgr.closeExpiredConnections();
-                        // Optionally, close connections
-                        // that have been idle longer than 30 sec
-                        getConnectionManager().closeIdleConnections(3, TimeUnit.SECONDS);
-                        System.out.println(111111111);
-                    }
-                }
-            } catch (InterruptedException ex) {
-                // terminate
-            }
-        });
-
 
     }
 
@@ -242,9 +217,12 @@ public class HttpClientWithDNSCacheAutoClear {
         } catch (ConnectTimeoutException e){
             DnsCache dnsCache = DnsCacheManipulator.getWholeDnsCache();
             System.out.println("11:"+dnsCache);
-            DnsCacheManipulator.removeDnsCache("www.baidu.com");
+            //删除失效DNS缓存
+            DnsCacheManipulator.removeDnsCache(url);
             dnsCache = DnsCacheManipulator.getWholeDnsCache();
             System.out.println("12:"+dnsCache);
+            //清理失效连接
+            connMgr.closeExpiredConnections();
             return 501;
         }
         catch (Exception e) {
